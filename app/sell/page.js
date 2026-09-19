@@ -37,6 +37,45 @@ export default function SellPage() {
   // คำนวณราคารวมอัตโนมัติ (ราคา x จำนวน)
   const totalPrice = selectedProduct ? selectedProduct.price * quantity : 0;
 
+  // -------------------------------------------------------------
+  // [ส่วนที่เพิ่มใหม่] ฟังก์ชันสำหรับยิงข้อความไปยัง Telegram Bot
+  // -------------------------------------------------------------
+  const sendTelegramNotification = async (messageText) => {
+    const botToken = process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID;
+
+    // ตรวจสอบว่ามีการตั้งค่า Environment Variables หรือไม่
+    if (!botToken || !chatId) {
+      console.warn('Telegram Bot Token หรือ Chat ID ยังไม่ได้ระบุใน Environment Variables');
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.telegram.org/bot${botToken}/sendMessage`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: messageText,
+            parse_mode: 'HTML',
+          }),
+        }
+      );
+
+      const result = await response.json();
+      if (!result.ok) {
+        console.error('Telegram API Error:', result.description);
+      }
+    } catch (err) {
+      // ครอบ try-catch เพื่อไม่ให้กระทบกระบวนการขายในเว็บ หาก Telegram ยิงไม่ผ่าน
+      console.error('Failed to send Telegram notification:', err);
+    }
+  };
+
   // ฟังก์ชันสำหรับการขายสินค้า
   const handleSell = async (e) => {
     e.preventDefault();
@@ -83,6 +122,40 @@ export default function SellPage() {
         .eq('id', selectedProduct.id);
 
       if (updateError) throw updateError;
+
+      // -------------------------------------------------------------
+      // [ส่วนที่เพิ่มใหม่] การยิงแจ้งเตือนผ่าน Telegram หลังตัดสต๊อกสำเร็จ
+      // -------------------------------------------------------------
+      const currentTime = new Date().toLocaleString('th-TH', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      // งานที่ 1: ข้อความแจ้งเตือน Order ใหม่
+      const newOrderMsg = `🛍️ <b>มีรายการขายใหม่! [iLoveSleep]</b>\n` +
+        `• <b>สินค้า:</b> ${selectedProduct.name}\n` +
+        `• <b>จำนวน:</b> ${quantity} ${selectedProduct.unit || 'ชิ้น'}\n` +
+        `• <b>ราคารวม:</b> ${totalPrice.toLocaleString()} บาท\n` +
+        `• <b>สต๊อกคงเหลือปัจจุบัน:</b> ${newStock} ${selectedProduct.unit || 'ชิ้น'}\n` +
+        `• <b>เวลา:</b> ${currentTime}`;
+
+      // ยิงแจ้งเตือน Order ใหม่
+      await sendTelegramNotification(newOrderMsg);
+
+      // งานที่ 2: ข้อความแจ้งเตือน Stock เหลือน้อย (Stock <= 5)
+      if (newStock <= 5) {
+        const lowStockMsg = `🚨 <b>[เตือนภัย] สต๊อกสินค้าใกล้หมด!</b>\n` +
+          `• <b>สินค้า:</b> ${selectedProduct.name}\n` +
+          `• <b>คงเหลือเพียง:</b> ${newStock} ${selectedProduct.unit || 'ชิ้น'}\n` +
+          `⚠️ <i>กรุณาเติมสต๊อกสินค้าด่วน!</i>`;
+
+        // ยิงแจ้งเตือน Low Stock แยกอีก 1 ข้อความทันที
+        await sendTelegramNotification(lowStockMsg);
+      }
+      // -------------------------------------------------------------
 
       // 4. แจ้งเตือนเมื่อสำเร็จ รีเซ็ตฟอร์ม และโหลดข้อมูลสินค้าใหม่
       alert(`ขายสินค้าสำเร็จ! รวมเป็นเงิน ${totalPrice.toLocaleString()} บาท`);
